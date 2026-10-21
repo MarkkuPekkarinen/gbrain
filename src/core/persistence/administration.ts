@@ -115,6 +115,13 @@ function writerFailuresQuery(sourceId: string, params: Record<string, unknown>):
     ...(p.category ? { category: p.category } : {}) };
 }
 
+/** GBRA-130 A-59: writer status's movement, or a `not_read` with its code and a read-only fix; a failed read never reads as no movement. */
+async function writerStatusMovement(engine: BrainEngine, sourceId: string | undefined) {
+  return (await import('./sync-movement.ts')).readSourceMovement(engine, sourceId === undefined ? {} : { sourceIds: [sourceId] })
+    .catch((error: unknown) => ({ status: 'not_read' as const, code: String((error as { code?: unknown } | null)?.code ?? 'storage_error'),
+      fix: readFix('Reads source movement on its own, read-only.', { argv: ['gbrain', 'sources', 'writer', 'movement', ...(sourceId === undefined ? [] : [sourceId]), '--json'] }) }));
+}
+
 export async function runPersistenceAdministration(engine: BrainEngine, operation: PersistenceAdminOperation,
   params: Record<string, unknown>, config?: GBrainConfig, embeddingRetryPolicy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
   if (operation === 'writer_reconcile_preview') return (await import('./reconcile.ts')).runReconcilePreview(engine, params);
@@ -181,7 +188,13 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return runGitDurabilityAdministration(engine, params);
   }
   if (operation === 'writer_retry_effects') {
-    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state']);
+    keys(params, ['source_id', 'request_id', 'dry_run', 'admin_intent', 'expected_state', 'parked_pushes']);
+    if (params.parked_pushes === true) {
+      if (params.request_id !== undefined || params.admin_intent !== undefined || params.expected_state !== undefined) throw invalid(
+        '--parked-pushes retries every parked push of the source; it takes no --request-id or admin intent.',
+        'Run gbrain sources writer retry-effects <source> --parked-pushes [--dry-run], or name one request with --request-id instead.');
+      return (await import('./git-durability-administration.ts')).retrySourceParkedPushes(engine, source(params.source_id), params.dry_run === true);
+    }
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',
       'Pass --request-id with the original write\'s request id (a UUID); gbrain sources writer status for that source lists blocked effects with their request ids.',
       typeof params.source_id === 'string' && isValidSourceId(params.source_id)
@@ -272,7 +285,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       host: { host_id: existingLocalHostId(), ...await (await import('./consumer-diagnostics.ts')).hostConsumersReport(engine, existingLocalHostId()) },
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).
-      movement: await (await import('./sync-movement.ts')).readSourceMovement(engine, params.source_id === undefined ? {} : { sourceIds: [source(params.source_id)] }).catch(() => []) };
+      movement: await writerStatusMovement(engine, params.source_id === undefined ? undefined : source(params.source_id)) };
   }
   if (operation === 'writer_claim') {
     keys(params, ['source_id', 'path', 'dry_run', 'admin_intent', 'expected_state']);

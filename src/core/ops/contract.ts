@@ -256,6 +256,8 @@ export interface ParamDef {
   properties?: Record<string, ParamDef>;
   /** Advertised on the full MCP surface only (keeps the starter tool list inside its size budget). */
   fullSurfaceOnly?: boolean;
+  /** An object param the CLI takes as repeated `--flag key=value` (`key=a,b` is a list); MCP passes the object. */
+  cliKeyValue?: boolean;
 }
 
 export interface Logger {
@@ -461,6 +463,12 @@ export interface OperationContext {
    * (network transports), independent of the remote trust flag.
    */
   transport?: 'stdio' | 'http';
+  /**
+   * Largest request frame this connection reads, in bytes, set by the transport that built the context (legacy HTTP:
+   * GBRAIN_HTTP_MAX_BODY_BYTES; OAuth /mcp: the SDK's 4 MiB; stdio: its message buffer). Sizes upload parts
+   * (persistence/page-upload.ts partMaxFrameBytes); never a trust input.
+   */
+  inboundFrameBytes?: number;
   /**
    * WP2/D3: response-meta side channel. Handlers that compute out-of-band
    * result metadata (retrieval degradation, strict-mode warnings) publish it

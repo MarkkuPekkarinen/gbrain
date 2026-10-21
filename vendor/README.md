@@ -90,6 +90,17 @@ while it is still producing them. The next statement on that connection then
 stored its rows after that many empty slots, so a one-row read came back as
 `[empty, row]` (`test/e2e/postgres-driver-row-count-postgres.test.ts`).
 
+An idle connection keeps nothing from its last statement. Stock postgres.js
+left its receive buffer as an empty view over the last message it joined from
+several socket reads, so the buffer stayed allocated until the connection's
+next read. For a 1 MiB bytea row, that buffer is the 2 MiB hex DataRow. The
+desync tripwire keeps only the last statement's text, not the query, whose
+promise holds its rows, and a connection that closes forgets the last
+statement it wrote, with its parameters. Pools hand statements out in turn, so
+before this fix each pooled connection held one segment read
+(`test/e2e/postgres-driver-idle-retention-postgres.test.ts`,
+`test/large-pages/segmented-prior-view.test.ts`).
+
 ## Reproduce and update
 
 Run `bash vendor/update-postgres.sh --check` to download the pinned upstream
@@ -97,6 +108,12 @@ tarball, verify SHA-512, apply the checked-in patch to every published runtime
 export, verify the upstream license and compare every byte. Run without
 `--check` to regenerate `postgres/`. This does not read a brain or alter any
 installed service. No driver dependency installation is required after regeneration.
+`bun run verify` runs the check as `check:vendor-postgres`
+(`scripts/check-vendor-postgres.sh`), so a fix in one copy that is missing from
+the patch or the other copies fails CI. The two pinned downloads are retried
+(bounded, with backoff) and kept by content hash in `~/.cache/gbrain-vendor`
+(`GBRAIN_VENDOR_CACHE`; test.yml caches it), and each is hash-checked on use.
+Without network and cache it is a recorded skip locally and a failure under CI.
 
 For security updates, the GBrain release maintainer owns this dependency:
 review upstream security advisories and supported releases, update the exact
